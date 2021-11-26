@@ -1,12 +1,11 @@
+    use crate::util;
     use std::io::{BufReader, Read, Seek, SeekFrom};
-    use std::mem::size_of;
-
     type Result<T> = std::result::Result<T, Error>;
 
     #[derive(Debug)]
     pub enum Error {
         Unknown,
-        Consume(&'static str, std::io::Error),
+        Consume(std::io::Error),
         NotPDBFile,
         InvalidBlockSize(u32),
         Seek(std::io::Error),
@@ -14,21 +13,10 @@
         StreamNumberOutOfBounds,
         BlockNumberOutOfBounds,
     }
-    macro_rules! consume {
-        ($reader:expr, $ty:ty, $field:expr) => {{
-            let mut tmp = [0u8; size_of::<$ty>()];
-            $reader
-                .read_exact(&mut tmp)
-                .map(|_| <$ty>::from_le_bytes(tmp))
-                .map_err(|x| Error::Consume($field, x))
-        }};
-        ($reader:expr, $size:expr, $field:expr) => {{
-            let mut tmp = [0u8; $size];
-            $reader
-                .read_exact(&mut tmp)
-                .map(|_| tmp)
-                .map_err(|x| Error::Consume($field, x))
-        }};
+    impl From<std::io::Error> for Error{
+        fn from(error: std::io::Error) -> Self{
+            Error::Consume(error)
+        }
     }
     #[derive(Default)]
     pub struct MSF {
@@ -62,6 +50,7 @@
     impl StreamDirectory {
         pub fn load(reader: &mut (impl Read + Seek), sb: &SuperBlock) -> Result<Self> {
             /// Reads through the StreamDirectory to build a list of streams
+            
             let mut ret = Self::default();
             // Need to find the StreamDirectory!
             // Using BlockMapAddr, we find a block indexed into the file where the stream dir indexes reside.
@@ -79,7 +68,7 @@
             let mut indirection_blocks: Vec<u32> =
                 Vec::with_capacity(num_indirection_entries as usize);
             for _ in 0..num_indirection_entries {
-                indirection_blocks.push(consume!(reader, u32, "Stream Directory Fragment Blocks")?)
+                indirection_blocks.push(util::consume!(reader, u32, "Stream Directory Fragment Blocks")?)
             }
             println!("StreamDirectory blocks{:?}", indirection_blocks);
             let mut cur_indirection_block = 0;
@@ -91,13 +80,13 @@
                 .seek(SeekFrom::Start((first_block * sb.block_size) as u64))
                 .map_err(Error::Seek)?;
             let mut bytes_to_read = sb.block_size;
-            ret.num_streams = consume!(reader, u32, "Number of Streams")?;
+            ret.num_streams = util::consume!(reader, u32, "Number of Streams")?;
             bytes_to_read -= 4;
 
             let streams_left: u32 = ret.num_streams;
             // now read streams_left u32s from the blocks.
             for cur_stream in 0..streams_left {
-                ret.stream_sizes.push(consume!(reader, u32, "Stream Size")?);
+                ret.stream_sizes.push(util::consume!(reader, u32, "Stream Size")?);
                 bytes_to_read -= 4;
                 if bytes_to_read == 0 {
                     let next_blk = *indirection_blocks
@@ -132,7 +121,7 @@
                 let mut cur_vec: Vec<u32> = Vec::with_capacity(num_blocks_in_stream as usize);
                 //now read num_blocks_in_stream entries!
                 for block_num in 0..num_blocks_in_stream {
-                    cur_vec.push(consume!(reader, u32, "Block_Size")?);
+                    cur_vec.push(util::consume!(reader, u32, "Block_Size")?);
                     bytes_to_read -= 4;
                     if bytes_to_read == 0 {
                         let next_blk = *indirection_blocks
@@ -156,11 +145,11 @@
     impl SuperBlock {
         pub fn load(reader: &mut (impl Read + Seek)) -> Result<Self> {
             let mut ret = Self::default();
-            ret.file_magic = consume!(reader, 0x20, "MSF Header")?;
+            ret.file_magic = util::consume!(reader, 0x20, "MSF Header")?;
             if &ret.file_magic != b"Microsoft C/C++ MSF 7.00\r\n\x1aDS\x00\x00\x00" {
                 return Err(Error::NotPDBFile);
             }
-            ret.block_size = consume!(reader, u32, "Block Size")?;
+            ret.block_size = util::consume!(reader, u32, "Block Size")?;
             if ret.block_size != 512u32
                 && ret.block_size != 1024u32
                 && ret.block_size != 2048u32
@@ -168,11 +157,11 @@
             {
                 return Err(Error::InvalidBlockSize(ret.block_size));
             }
-            ret.free_block_map = consume!(reader, u32, "Free Block Map")?;
-            ret.num_blocks = consume!(reader, u32, "Num Blocks")?;
-            ret.num_directory_bytes = consume!(reader, u32, "Num Directory Bytes")?;
-            ret.unknown = consume!(reader, u32, "Unknown")?;
-            ret.block_map_addr = consume!(reader, u32, "Block Map Addr")?;
+            ret.free_block_map = util::consume!(reader, u32, "Free Block Map")?;
+            ret.num_blocks = util::consume!(reader, u32, "Num Blocks")?;
+            ret.num_directory_bytes = util::consume!(reader, u32, "Num Directory Bytes")?;
+            ret.unknown = util::consume!(reader, u32, "Unknown")?;
+            ret.block_map_addr = util::consume!(reader, u32, "Block Map Addr")?;
             Ok(ret)
         }
     }
@@ -282,7 +271,7 @@
                         .reader
                         .read_exact(&mut tmp)
                         .map(|_| tmp)
-                        .map_err(|x| Error::Consume("Read", x))
+                        .map_err(|x| Error::Consume(x))
                         .expect("What?");
                     //println!(
                     //   "Read block :{:?} \ndata: {:?}",
@@ -315,7 +304,7 @@
                         .reader
                         .read_exact(&mut tmp)
                         .map(|_| tmp)
-                        .map_err(|x| Error::Consume("Read", x))
+                        .map_err(|x| Error::Consume(x))
                         .expect("What?");
                     //println!(
                     //    "Read block :{:?} \ndata: {:?}",
